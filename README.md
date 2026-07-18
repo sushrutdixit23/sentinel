@@ -59,6 +59,27 @@ src/sentinel/narrative/       → Claude-generated analyst commentary (Tier 2)
       quarters/years are hand-extracted from uploaded PDFs; a sellable
       version needs a user to upload/point at their own filings and get
       them parsed automatically. This is the next concrete build target.
+- [x] Dashboard (`app.py`, Streamlit) — built as the approval-gated review
+      layer, not just a display. AI drafts a narrative → sits as PENDING →
+      a human explicitly Approves (as-is or edited) or Rejects before it
+      counts as final. Same pattern as [[zyntask-engage]]'s magic review
+      link. Review state persists to `data/reviews/*.json` (one file per
+      company/period, same convention as `data/extracted/`). The original
+      AI draft is never mutated by review — `test_original_ai_narrative_never_mutated_by_approve_or_reject`
+      locks this in, since it's the audit trail this whole layer exists for.
+      **Boot-tested headless (HTTP 200, clean logs) and the exact pipeline
+      + review-store code path it calls was run directly and verified —
+      not clicked through interactively, since that needs a browser.**
+
+## Running the dashboard
+
+```bash
+streamlit run app.py
+```
+
+Nothing is final until you click Approve. The "Final report" section at
+the bottom only ever shows narratives with human sign-off — an unreviewed
+AI draft never appears there, by design.
 
 Run `python scripts/run_anomaly.py` for the full pipeline through anomaly
 detection (no API key needed). Run `python scripts/run_narrative.py` for
