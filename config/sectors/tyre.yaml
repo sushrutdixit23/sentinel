@@ -1,0 +1,46 @@
+# Sector-specific rules for tyre manufacturing.
+# This is the file you'd swap out (and duplicate as e.g. epc.yaml) to point
+# Sentinel at a different industry. Nothing in src/sentinel/ should ever
+# hardcode a tyre-specific concept — it all reads from here.
+
+sector_id: tyre
+display_name: "Tyre Manufacturing"
+
+# Line items the engine treats as first-class for this sector.
+# Maps to fields on the FinancialStatement schema.
+key_line_items:
+  - revenue_from_operations
+  - ebitda
+  - profit_before_tax
+  - profit_after_tax
+  - finance_costs
+  - exceptional_items
+
+# Derived ratios the engine should compute for every company/period.
+derived_ratios:
+  - id: ebitda_margin
+    formula: "ebitda / revenue_from_operations"
+  - id: pat_margin
+    formula: "profit_after_tax / revenue_from_operations"
+  - id: yoy_revenue_growth
+    formula: "(revenue_from_operations - prior_year.revenue_from_operations) / prior_year.revenue_from_operations"
+  - id: yoy_pat_growth
+    formula: "(profit_after_tax - prior_year.profit_after_tax) / prior_year.profit_after_tax"
+
+# Thresholds the anomaly module (Tier 2) will use.
+# These are starting points, not tuned — expect to revisit once the
+# anomaly module is actually built against this peer set.
+anomaly_thresholds:
+  peer_relative_zscore: 2.0        # flag if a company is >2 std dev from peer mean on a ratio
+  yoy_swing_pct: 15.0              # flag any YoY change bigger than this on a key line item
+  exceptional_item_pct_of_pbt: 20.0  # flag if exceptional items exceed this % of pre-exceptional PBT
+
+# Known sector-specific context worth surfacing in narrative generation —
+# not hardcoded logic, just prompt context for the narrative layer.
+narrative_context: |
+  Tyre manufacturers are exposed to natural rubber and crude-derivative
+  input cost cycles, which can swing margins independent of demand.
+  Distinguish margin moves driven by realization/mix from those driven
+  by raw material cost pass-through lag. Segment mix (replacement vs.
+  OEM vs. export) and standalone-vs-consolidated basis differences are
+  common sources of apparent-but-not-real anomalies in this sector.

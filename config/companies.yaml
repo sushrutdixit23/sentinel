@@ -1,0 +1,48 @@
+# The peer set for this Sentinel instance.
+# Adding a company: add an entry here + drop its extracted filings in data/extracted/.
+# Nothing else in the pipeline needs to change.
+
+sector: tyre
+
+# comparison_basis is the analytical standard for peer comparison — consolidated
+# for every company, since that's what captures the full corporate entity. It is
+# NOT "whichever basis we happen to have data for" — the engine flags any company
+# whose extracted data doesn't match this, rather than silently treating standalone
+# data as if it were the comparison standard.
+companies:
+  - id: apollo_tyres
+    name: "Apollo Tyres Ltd"
+    ticker: APOLLOTYRE
+    exchange: [NSE, BSE]
+    is_subject: true          # the primary company Sentinel is analyzing
+    comparison_basis: consolidated
+
+  - id: ceat
+    name: "Ceat Ltd"
+    ticker: CEATLTD
+    exchange: [NSE, BSE]
+    is_subject: false
+    comparison_basis: consolidated
+
+  - id: jk_tyre
+    name: "JK Tyre & Industries Ltd"
+    ticker: JKTYRE
+    exchange: [NSE, BSE]
+    is_subject: false
+    comparison_basis: consolidated   # NOTE: current extract only has standalone — see README caveat
+
+  - id: balkrishna
+    name: "Balkrishna Industries Ltd"
+    ticker: BALKRISIND
+    exchange: [NSE, BSE]
+    is_subject: false
+    comparison_basis: consolidated
+
+  - id: mrf
+    name: "MRF Ltd"
+    ticker: MRF
+    exchange: [NSE, BSE]
+    is_subject: false
+    comparison_basis: consolidated   # NOTE: current extract only has standalone — see README caveat
+
+fiscal_year_convention: "April-March"   # Indian FY: FY26 = year ended March 31, 2026
