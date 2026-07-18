@@ -114,33 +114,35 @@ def detect_peer_relative_outliers(
     return flags
 
 
-def detect_exceptional_items(
-    statements: list[FinancialStatement], sector_config: dict[str, Any]
-) -> list[AnomalyFlag]:
+def detect_exceptional_items(df: pd.DataFrame, sector_config: dict[str, Any]) -> list[AnomalyFlag]:
+    """Reads exceptional_item_pct_of_pbt straight from the peer table — the
+    same engine-computed ratio every other metric uses, rather than
+    recomputing the math separately from raw statements. This also means
+    the flag now has real peer context available (other companies' values
+    for this same metric), which it didn't before."""
     threshold_pct = sector_config["anomaly_thresholds"]["exceptional_item_pct_of_pbt"]
     threshold = threshold_pct / 100
     flags = []
 
-    for stmt in statements:
-        if not stmt.exceptional_items:
+    if "exceptional_item_pct_of_pbt" not in df.columns:
+        return flags
+
+    for _, row in df.iterrows():
+        ratio = row["exceptional_item_pct_of_pbt"]
+        if pd.isna(ratio) or ratio <= threshold:
             continue
-        pre_exceptional_pbt = stmt.profit_before_tax + stmt.exceptional_items
-        if pre_exceptional_pbt <= 0:
-            continue  # ratio isn't meaningful against a pre-exceptional loss
-        ratio = stmt.exceptional_items / pre_exceptional_pbt
-        if ratio <= threshold:
-            continue
+        pre_exceptional_pbt = row["pbt_cr"] + row["exceptional_items_cr"]
         flags.append(
             AnomalyFlag(
-                company_id=stmt.company_id,
-                company_name=stmt.company_name,
-                period_label=stmt.period_label,
+                company_id=row["company_id"],
+                company_name=row["company_name"],
+                period_label=row["period_label"],
                 flag_type="exceptional_item",
                 metric="exceptional_item_pct_of_pbt",
-                value=ratio,
+                value=float(ratio),
                 threshold=threshold,
                 description=(
-                    f"exceptional items (₹{stmt.exceptional_items:,.1f} cr) are "
+                    f"exceptional items (₹{row['exceptional_items_cr']:,.1f} cr) are "
                     f"{ratio:.1%} of pre-exceptional PBT (₹{pre_exceptional_pbt:,.1f} cr), "
                     f"past the configured {threshold_pct:.0f}% threshold"
                 ),
@@ -154,9 +156,15 @@ def run_all_checks(
     peer_df: pd.DataFrame,
     sector_config: dict[str, Any],
 ) -> list[AnomalyFlag]:
-    """Run every detector and return the combined, unsorted flag list."""
+    """Run every detector and return the combined, unsorted flag list.
+
+    `statements` is kept in the signature for future detectors that need
+    raw statement-level data the peer table doesn't carry — none of the
+    three current detectors need it directly anymore now that
+    exceptional-item detection reads from the peer table too.
+    """
     flags: list[AnomalyFlag] = []
     flags += detect_yoy_swings(peer_df, sector_config)
     flags += detect_peer_relative_outliers(peer_df, sector_config)
-    flags += detect_exceptional_items(statements, sector_config)
+    flags += detect_exceptional_items(peer_df, sector_config)
     return flags

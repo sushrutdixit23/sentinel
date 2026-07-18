@@ -86,6 +86,8 @@ def build_peer_table(
             "basis_caveat": basis_caveat,
             "revenue_cr": stmt.revenue_from_operations,
             "pat_cr": stmt.profit_after_tax,
+            "pbt_cr": stmt.profit_before_tax,
+            "exceptional_items_cr": stmt.exceptional_items,
             "has_prior_year": prior is not None,
             **ratios,
         }

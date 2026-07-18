@@ -21,7 +21,7 @@ load_dotenv()
 from sentinel.anomaly import run_all_checks  # noqa: E402
 from sentinel.engine import build_peer_table  # noqa: E402
 from sentinel.ingestion import load_all, load_company_config, load_sector_config  # noqa: E402
-from sentinel.narrative import generate_narrative  # noqa: E402
+from sentinel.narrative import generate_narrative, group_flags_by_company  # noqa: E402
 
 
 def main() -> None:
@@ -32,14 +32,18 @@ def main() -> None:
     fy26_statements = [s for s in statements if s.period_label == "FY26"]
     peer_df = build_peer_table(statements, sector_config, company_config, period_type="FY")
     flags = run_all_checks(fy26_statements, peer_df, sector_config)
+    groups = group_flags_by_company(flags)
 
-    print(f"\n{len(flags)} flags to narrate. Making 2 API calls per flag...\n")
+    print(f"\n{len(flags)} flags across {len(groups)} companies. Making 2 API calls per company...\n")
 
-    for flag in flags:
+    for group in groups:
+        company_name = group[0].company_name
         print("=" * 78)
-        print(str(flag))
+        print(f"{company_name} ({group[0].period_label}) — {len(group)} flag(s)")
+        for f in group:
+            print(f"  - {f}")
         print("=" * 78)
-        result = generate_narrative(flag, statements, peer_df, sector_config)
+        result = generate_narrative(group, statements, peer_df, sector_config)
         print(f"\n[Turn 1 — hypothesis from own data]\n{result.initial_hypothesis}\n")
         print(f"[Turn 2 — checked against peer set, final narrative]\n{result.final_narrative}\n")
 

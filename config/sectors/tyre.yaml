@@ -26,6 +26,8 @@ derived_ratios:
     formula: "(revenue_from_operations - prior_year.revenue_from_operations) / prior_year.revenue_from_operations"
   - id: yoy_pat_growth
     formula: "(profit_after_tax - prior_year.profit_after_tax) / prior_year.profit_after_tax"
+  - id: exceptional_item_pct_of_pbt
+    formula: "exceptional_items / (profit_before_tax + exceptional_items)"
 
 # Thresholds the anomaly module (Tier 2) will use.
 # These are starting points, not tuned — expect to revisit once the

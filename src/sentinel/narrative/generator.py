@@ -1,24 +1,23 @@
 """
-Turns an AnomalyFlag into analyst commentary via a two-turn conversation
-with Claude — not a single prompt-and-done call.
+Turns a company's flags (one or more, same period) into analyst commentary
+via a two-turn conversation with Claude — not a single prompt-and-done
+call, and not one disconnected call per flag either.
 
-Turn 1: given only the flagged company's own data, ask for an initial
-         hypothesis. The model doesn't see the peer set yet, so it can't
-         just describe the peer context back — it has to reason from what
-         one company's numbers alone can support.
-Turn 2: hand over the same metric across the peer set and ask whether that
-         confirms the hypothesis (sector-wide effect), rules it out
-         (company-specific), or points somewhere else — then give the
-         final narrative.
+Turn 1: given only the flagged company's own data and ALL of its flags for
+         this period, ask for an initial hypothesis. If a company tripped
+         two related flags (e.g. a PAT swing AND an outsized exceptional
+         item), the model sees both together and can connect them, rather
+         than explaining each in isolation and never noticing they're the
+         same story.
+Turn 2: hand over peer-set context for every flagged metric and ask
+         whether that confirms (sector-wide effect), rules out
+         (company-specific), or points somewhere else — then give one
+         final narrative covering all the flags together.
 
 This is the "agentic reasoning, not single-pass output" requirement from
-the foundation doc: the check has to happen against a second data point
-before the narrative is finalized, not be assembled from one shot.
+the foundation doc.
 
-Requires ANTHROPIC_API_KEY (see .env.example). Not runnable in the
-environment this was built in — verified via a mocked client in
-tests/test_narrative.py instead; a live run is the next step for whoever
-has a key.
+Requires ANTHROPIC_API_KEY (see .env.example).
 """
 
 from __future__ import annotations
@@ -35,13 +34,30 @@ from sentinel.schema import FinancialStatement
 DEFAULT_MODEL = "claude-sonnet-5"
 
 
+def _extract_text(response: Any) -> str:
+    """Pull the text out of a Claude response.
+
+    Some models return non-text content blocks ahead of the actual text
+    (e.g. a thinking block) — content[0] is NOT reliably the text block.
+    This scans for the first block with type == "text" instead of
+    assuming position.
+    """
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            return block.text
+    raise ValueError(
+        f"No text block found in response content — got block types: "
+        f"{[getattr(b, 'type', type(b).__name__) for b in response.content]}"
+    )
+
+
 class MessagesClient(Protocol):
     """The subset of the Anthropic client's interface this module needs —
     mirrors the real SDK shape (client.messages.create(...)) so a mock
     used in tests looks exactly like the real thing from this module's
     point of view."""
 
-    messages: Any  # has .create(**kwargs) -> object with .content[0].text
+    messages: Any  # has .create(**kwargs) -> object with .content containing a text block
 
 
 def _get_client() -> Any:
@@ -82,31 +98,68 @@ def _peer_context_for_metric(peer_df: pd.DataFrame, metric: str, exclude_company
             continue
         marker = " <- flagged company" if row["company_id"] == exclude_company_id else ""
         value = row[metric]
-        formatted = f"{value:+.1%}" if "yoy" in metric or "margin" in metric else f"{value:,.2f}"
+        is_ratio = "yoy" in metric or "margin" in metric or "pct" in metric
+        formatted = f"{value:+.1%}" if is_ratio else f"{value:,.2f}"
         rows.append(f"  {row['company_name']}: {formatted}{marker}")
     return "\n".join(rows)
 
 
+def _peer_context_for_metrics(peer_df: pd.DataFrame, metrics: list[str], exclude_company_id: str) -> str:
+    """Peer context for every distinct metric across a company's flags,
+    each under its own header — not just the first flag's metric."""
+    seen: list[str] = []
+    sections = []
+    for metric in metrics:
+        if metric in seen:
+            continue
+        seen.append(metric)
+        sections.append(f"{metric}:\n{_peer_context_for_metric(peer_df, metric, exclude_company_id)}")
+    return "\n\n".join(sections)
+
+
+def group_flags_by_company(flags: list[AnomalyFlag]) -> list[list[AnomalyFlag]]:
+    """Group flags by (company_id, period_label) so each group can go
+    through generate_narrative() as one bundled call. Preserves the order
+    companies first appear in `flags`."""
+    groups: dict[tuple[str, str], list[AnomalyFlag]] = {}
+    for flag in flags:
+        key = (flag.company_id, flag.period_label)
+        groups.setdefault(key, []).append(flag)
+    return list(groups.values())
+
+
 def generate_narrative(
-    flag: AnomalyFlag,
+    flags: list[AnomalyFlag],
     statements: list[FinancialStatement],
     peer_df: pd.DataFrame,
     sector_config: dict[str, Any],
     client: MessagesClient | None = None,
     model: str = DEFAULT_MODEL,
 ) -> NarrativeResult:
+    """Generate one narrative covering all of `flags`.
+
+    All flags must belong to the same company and period — pass a
+    single-item list for a company with only one flag; group multi-flag
+    companies before calling this (see scripts/run_narrative.py for the
+    grouping helper).
+    """
+    if not flags:
+        raise ValueError("flags cannot be empty")
+    company_id = flags[0].company_id
+    period_label = flags[0].period_label
+    if any(f.company_id != company_id or f.period_label != period_label for f in flags):
+        raise ValueError("all flags passed to generate_narrative must share company_id and period_label")
+
     client = client or _get_client()
 
     stmt = next(
-        s
-        for s in statements
-        if s.company_id == flag.company_id and s.period_label == flag.period_label
+        s for s in statements if s.company_id == company_id and s.period_label == period_label
     )
     prior = next(
         (
             s
             for s in statements
-            if s.company_id == flag.company_id
+            if s.company_id == company_id
             and s.period_end_date.year == stmt.period_end_date.year - 1
             and s.period_type == stmt.period_type
         ),
@@ -117,36 +170,44 @@ def generate_narrative(
         f"You are a financial analyst covering the {sector_config['display_name']} sector.\n\n"
         f"{sector_config.get('narrative_context', '')}\n\n"
         "Be concrete and specific. Do not pad with generic caveats. If the data doesn't "
-        "support a confident conclusion, say what additional information would resolve it."
+        "support a confident conclusion, say what additional information would resolve it. "
+        "If multiple flags are given, consider whether they're connected before treating them "
+        "as separate stories."
     )
 
-    # Turn 1 — hypothesis from the company's own data only
+    flags_block = "\n".join(f"- {f.description}" for f in flags)
+    plural = "flags were" if len(flags) > 1 else "flag was"
+
     turn1_user = (
-        f"A flag was raised: {flag.description}\n\n"
+        f"{len(flags)} {plural} raised for {stmt.company_name} ({period_label}):\n{flags_block}\n\n"
         f"Company data:\n{_company_context(stmt, prior)}\n\n"
         "Based only on this company's own data, what's your initial hypothesis for "
-        "why this happened? 2-3 sentences."
+        "why this happened? If there's more than one flag, say whether you think they're "
+        "connected or separate issues. 2-4 sentences."
     )
     response1 = client.messages.create(
         model=model,
-        max_tokens=300,
+        max_tokens=500,
+        thinking={"type": "disabled"},
         system=system_prompt,
         messages=[{"role": "user", "content": turn1_user}],
     )
-    hypothesis = response1.content[0].text
+    hypothesis = _extract_text(response1)
 
-    # Turn 2 — check the hypothesis against the peer set for the same metric
-    peer_context = _peer_context_for_metric(peer_df, flag.metric, flag.company_id)
+    metrics = [f.metric for f in flags]
+    peer_context = _peer_context_for_metrics(peer_df, metrics, company_id)
     turn2_user = (
-        f"Here's how {flag.metric} compares across the sector peer set for the same period:\n\n"
+        f"Here's how each flagged metric compares across the sector peer set for the same period:\n\n"
         f"{peer_context}\n\n"
         "Does this peer context CONFIRM your hypothesis (a sector-wide effect), RULE IT OUT "
         "(this looks company-specific), or point to something else? State which of the three "
-        "explicitly, then give your final analyst narrative in 3-4 sentences."
+        "explicitly, then give your final analyst narrative in 3-5 sentences covering all the "
+        "flags together."
     )
     response2 = client.messages.create(
         model=model,
-        max_tokens=400,
+        max_tokens=700,
+        thinking={"type": "disabled"},
         system=system_prompt,
         messages=[
             {"role": "user", "content": turn1_user},
@@ -154,12 +215,14 @@ def generate_narrative(
             {"role": "user", "content": turn2_user},
         ],
     )
-    final_narrative = response2.content[0].text
+    final_narrative = _extract_text(response2)
 
     revised = "rule it out" in final_narrative.lower() or "something else" in final_narrative.lower()
 
     return NarrativeResult(
-        flag=flag,
+        company_id=company_id,
+        period_label=period_label,
+        flags=flags,
         initial_hypothesis=hypothesis,
         peer_context_given=peer_context,
         final_narrative=final_narrative,

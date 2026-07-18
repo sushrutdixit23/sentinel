@@ -8,7 +8,7 @@ generator.py for why this isn't a single prompt-and-done call.
 Requires ANTHROPIC_API_KEY. See .env.example and README setup.
 """
 
-from sentinel.narrative.generator import generate_narrative
+from sentinel.narrative.generator import generate_narrative, group_flags_by_company
 from sentinel.narrative.models import NarrativeResult
 
-__all__ = ["generate_narrative", "NarrativeResult"]
+__all__ = ["generate_narrative", "group_flags_by_company", "NarrativeResult"]

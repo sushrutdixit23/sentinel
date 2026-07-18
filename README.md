@@ -38,16 +38,32 @@ src/sentinel/narrative/       → Claude-generated analyst commentary (Tier 2)
       `config/sectors/tyre.yaml`
 - [x] Narrative layer — two-turn agentic pattern (hypothesis from own data,
       then checked against peer context) in `narrative/generator.py`.
-      **Built and tested against a mocked client, not yet run live** — needs
-      your own `ANTHROPIC_API_KEY` (see `.env.example`). Everything else in
-      this repo has been executed end-to-end against the real filing data;
-      this module is the one exception, by necessity.
-- [ ] Dashboard (Streamlit)
+      **Run live and verified** — all 7 flags across 5 companies narrated
+      successfully. Two real bugs found and fixed from that live run:
+      (1) Claude Sonnet 5's adaptive thinking silently consumed the entire
+      token budget on one flag, leaving no visible text — fixed by passing
+      `thinking={"type": "disabled"}` explicitly, since the reasoning step
+      is already handled by this module's own two-turn structure; (2) a
+      company with multiple flags (Apollo: a PAT swing AND an outsized
+      exceptional item) was narrated as two disconnected calls that
+      couldn't reference each other, and the exceptional-item metric had
+      no peer comparison data at all — fixed by making
+      `exceptional_item_pct_of_pbt` a proper engine-computed ratio
+      (`config/sectors/tyre.yaml`) and bundling a company's flags into one
+      narrative pass via `group_flags_by_company()`.
+- [ ] Dashboard (Streamlit) — reframed per discussion: not just a display
+      layer, but the review/approval step before a narrative counts as
+      final, following the same supervised pattern as [[zyntask-engage]]'s
+      magic review link
+- [ ] Real (non-manual) filing ingestion — currently 9 companies'
+      quarters/years are hand-extracted from uploaded PDFs; a sellable
+      version needs a user to upload/point at their own filings and get
+      them parsed automatically. This is the next concrete build target.
 
 Run `python scripts/run_anomaly.py` for the full pipeline through anomaly
 detection (no API key needed). Run `python scripts/run_narrative.py` for
-the narrative layer on top — this one costs real tokens (2 calls per flag,
-7 flags on the current FY26 dataset = 14 calls).
+the narrative layer on top — now makes 2 calls per COMPANY (not per flag),
+so 7 flags across 5 companies costs 10 calls, not 14.
 
 ## Data provenance
 
